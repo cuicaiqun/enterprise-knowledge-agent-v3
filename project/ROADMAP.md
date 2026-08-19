@@ -20,18 +20,18 @@
 
 | ID | 门禁项 | 验收命令 / 证据 | 状态 | 最近证据 |
 |----|--------|-----------------|------|----------|
-| **M1** | 全量单元测试稳定通过 | `cd project/code/python && REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 UPDATE_MODE=off bash scripts/run_unit_tests.sh` → 0 failed | ✅ | 08-19：114 passed / 11 skipped |
+| **M1** | 全量单元测试稳定通过 | `cd project/code/python && REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 UPDATE_MODE=off bash scripts/run_unit_tests.sh` → 0 failed | ✅ | 08-19：114 passed / 14 skipped（M8 回归） |
 | **M2** | 部署 / 密钥门禁 | `python project/code/python/scripts/check_p0_3_deploy.py` → OK | ✅ | 08-19 deploy check OK |
 | **M3** | P0 安全隔离 E2E | `e2e_tenant_neo4j.sh` + `e2e_neo4j_readonly.sh` passed | ✅ | 08-19 双租户 1 passed；只读 2 passed |
-| **M4** | 入库 → 检索 → 问答主链路 | 上传 + ingest + QA API 有单测覆盖；可本地/compose 演示一次完整路径 | ⚠️ | 单测覆盖有；缺一页「端到端演示」书面验收 |
+| **M4** | 入库 → 检索 → 问答主链路 | 上传 + ingest + QA API 有单测覆盖；可本地/compose 演示一次完整路径 | ⚠️ | 单测覆盖有；步骤见 `docs/MVP_demo_guide.md`；缺本机 compose 走通日志 |
 | **M5** | 异步入库 + 任务状态 | `/api/ingest/tasks` 相关单测绿 | ✅ | `test_ingest_async.py` 等 |
 | **M6** | 认证 + ACL 基线 | JWT 登录/撤销/文档 ACL 单测绿 | ⚠️ | P0-4 单测绿；SSO / 多副本 HA 非 MVP 范围 |
 | **M7** | CI 与本地测试入口一致 | `.github/workflows/ci.yml` 调用 `run_unit_tests.sh` | ✅ | 08-15 CI 对齐 |
-| **M8** | MVP 演示手册 | `project/docs/` 下独立页：启动步骤、演示路径、已知限制 | ❌ | 未创建 |
+| **M8** | MVP 演示手册 | `project/docs/` 下独立页：启动步骤、演示路径、已知限制 | ✅ | 08-19 `project/docs/MVP_demo_guide.md` |
 
-**MVP 总状态：⚠️ 接近完成（7/8 项有证据；阻塞：M8 文档 + M4 书面端到端验收）**
+**MVP 总状态：⚠️ 接近完成（M8 已验收；阻塞：M4 本机 compose 走通 + M6 仍 ⚠️）**
 
-**MVP 达标后下一刀：** 从 [Post-MVP Backlog](#post-mvp--ai-engineering-backlog) 取 **B1** 最高优先级未启动项。
+**MVP 达标后下一刀：** 从 [Post-MVP Backlog](#post-mvp--ai-engineering-backlog) 取 **B2**（统一降级；B1 记忆为后续）。未全 ✅ 前禁止开 B 系列大改。
 
 ---
 
@@ -99,6 +99,20 @@
 6. ~~P1-1 watch/Kafka E2E~~ → **08-19 watch 2 passed + Kafka 1 passed**。
 7. ~~P1-3 告警门禁~~ → **08-19 `check_alerts.py` + Prometheus 规则 + 文档**。
 8. ~~P2 grounded 强制拒答~~ → **08-19 `qa_refuse_ungrounded` 默认开启**。
+
+### 2026-08-19 执行记录（M8 MVP 演示手册）
+
+**角色：** 迭代项目经理 / 交付文档（用户指定只做 M8）
+
+**已完成：**
+
+1. 新增 `project/docs/MVP_demo_guide.md`：compose/uvicorn 启动、health、UI + curl 的 upload → `/api/ingest/tasks` → `/api/qa/ask`、已知限制。
+2. `project/docs/README.md` 增加演示手册入口。
+3. 全量单测回归：`REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 bash scripts/run_unit_tests.sh` → **114 passed, 14 skipped, 0 failed**（Python 3.12.3）。
+
+**仍缺：** M4 需在有 LLM + compose 的环境按手册走通一次并贴日志；M6 SSO/HA 非 MVP，基线单测已绿但仍标 ⚠️。
+
+**下一刀：** M4 本机/compose 端到端书面验收（按 `MVP_demo_guide.md` 实跑），不要开 Post-MVP B 系列。
 
 ### 2026-08-19 执行记录（MultiAgent：P0-5 / P0-3 / P1-6）
 
@@ -536,6 +550,7 @@
 | 2026-08-17 | **P0-2/3/5 本版收口** | 图谱 ready 过滤；断存储/只读 E2E 脚本；本地自签 TLS + 轮换 runbook；全量单测 106 passed / 8 skipped；真实 docker E2E 待本机跑 |
 | 2026-08-19 | **P1-4/5/1 续** | backup drill + restore 脚本；ci-staging.yml；Kafka 毒丸/重平衡 E2E 4 passed |
 | 2026-08-19 | **MVP 门禁 + Post-MVP Backlog** | 新增 Phase A 出口标准（M1–M8）与 Phase B AI 工程 backlog（B1–B9）；供 Cloud Agent 持续迭代 |
+| 2026-08-19 | **M8 演示手册** | `project/docs/MVP_demo_guide.md`：启动步骤 + upload→ingest→QA + 已知限制；门禁 M8 → ✅ |
 
 ### 验收口径说明
 
