@@ -20,10 +20,10 @@
 
 | ID | 门禁项 | 验收命令 / 证据 | 状态 | 最近证据 |
 |----|--------|-----------------|------|----------|
-| **M1** | 全量单元测试稳定通过 | `cd project/code/python && REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 UPDATE_MODE=off bash scripts/run_unit_tests.sh` → 0 failed | ✅ | 08-19：114 passed / 14 skipped（M8 回归） |
+| **M1** | 全量单元测试稳定通过 | `cd project/code/python && REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 UPDATE_MODE=off bash scripts/run_unit_tests.sh` → 0 failed | ✅ | 08-20：115 passed / 15 skipped（含 M4 主链路） |
 | **M2** | 部署 / 密钥门禁 | `python project/code/python/scripts/check_p0_3_deploy.py` → OK | ✅ | 08-19 deploy check OK |
 | **M3** | P0 安全隔离 E2E | `e2e_tenant_neo4j.sh` + `e2e_neo4j_readonly.sh` passed | ✅ | 08-19 双租户 1 passed；只读 2 passed |
-| **M4** | 入库 → 检索 → 问答主链路 | 上传 + ingest + QA API 有单测覆盖；可本地/compose 演示一次完整路径 | ⚠️ | 单测覆盖有；步骤见 `docs/MVP_demo_guide.md`；缺本机 compose 走通日志 |
+| **M4** | 入库 → 检索 → 问答主链路 | 上传 + ingest + QA API 有单测覆盖；可本地/compose 演示一次完整路径 | ⚠️ | 08-20：`test_mvp_main_path.py` 1 passed（login→upload→task→QA）；`e2e_mvp_main_path.sh` 本环境 SKIP（无 Docker/API）；缺 compose 走通日志 |
 | **M5** | 异步入库 + 任务状态 | `/api/ingest/tasks` 相关单测绿 | ✅ | `test_ingest_async.py` 等 |
 | **M6** | 认证 + ACL 基线 | JWT 登录/撤销/文档 ACL 单测绿 | ⚠️ | P0-4 单测绿；SSO / 多副本 HA 非 MVP 范围 |
 | **M7** | CI 与本地测试入口一致 | `.github/workflows/ci.yml` 调用 `run_unit_tests.sh` | ✅ | 08-15 CI 对齐 |
@@ -99,6 +99,29 @@
 6. ~~P1-1 watch/Kafka E2E~~ → **08-19 watch 2 passed + Kafka 1 passed**。
 7. ~~P1-3 告警门禁~~ → **08-19 `check_alerts.py` + Prometheus 规则 + 文档**。
 8. ~~P2 grounded 强制拒答~~ → **08-19 `qa_refuse_ungrounded` 默认开启**。
+
+### 2026-08-20 执行记录（M4 HTTP 主链路薄切片）
+
+**角色：** 测试工程师（上线验收 / TDD）
+
+**切片目标：** 把 M4 的「上传 + ingest + QA API 有单测覆盖」收成 **一条** HTTP 路径；提供可重复的 live 入口。本 Cloud 环境 **无 Docker**，不把 M4 标 ✅。
+
+**已完成：**
+
+1. `tests/test_mvp_main_path.py`：未登录 401 → login → `/api/ingest/upload` 202 → 轮询 `succeeded` → `/api/qa/ask` 返回 `grounded` + `sources`（mock LLM）。
+2. `tests/test_mvp_main_path_e2e.py` + `scripts/e2e_mvp_main_path.sh`：`RUN_MVP_E2E=1` 打真实 API；health 不可达则 SKIP（exit 0）。
+3. `pytest.ini` marker `mvp_e2e`；手册与 `07_testing/unit_test_entry.md` 已挂入口。
+
+**验收：** 全量 `run_unit_tests.sh` → **115 passed, 15 skipped, 0 failed**（含新主链路 1 passed；live E2E 1 skipped）。`e2e_mvp_main_path.sh` 本环境 SKIP。
+
+**风险：** TestClient mock 绿 ≠ compose + 真 LLM 走通。上传/鉴权失败须 401，不得静默。
+**回滚：** 回退本 commit；不改 schema。
+**失败处理：** ingest `failed` 不得当作成功；live 脚本对 503/不可达 SKIP 而非红。
+**日志：** 任务 `status`、QA `grounded`/`sources`；live 可将响应当地写入 `/tmp/mvp-e2e-qa.json`。
+
+**仍缺：** 有 LLM 的 compose 上跑 `e2e_mvp_main_path.sh` 并贴日志，才能把 M4 标 ✅。M6 SSO/HA 非 MVP 仍 ⚠️。
+
+**下一刀：** 本机 compose 按 `MVP_demo_guide.md` + `e2e_mvp_main_path.sh` 实跑；或把 M6 标 ✅（JWT/ACL 单测已绿，SSO 明确延后）。
 
 ### 2026-08-19 执行记录（M8 MVP 演示手册）
 
@@ -551,6 +574,7 @@
 | 2026-08-19 | **P1-4/5/1 续** | backup drill + restore 脚本；ci-staging.yml；Kafka 毒丸/重平衡 E2E 4 passed |
 | 2026-08-19 | **MVP 门禁 + Post-MVP Backlog** | 新增 Phase A 出口标准（M1–M8）与 Phase B AI 工程 backlog（B1–B9）；供 Cloud Agent 持续迭代 |
 | 2026-08-19 | **M8 演示手册** | `project/docs/MVP_demo_guide.md`：启动步骤 + upload→ingest→QA + 已知限制；门禁 M8 → ✅ |
+| 2026-08-20 | **M4 HTTP 主链路** | `test_mvp_main_path.py` 一条路径覆盖 login→upload→task→QA；`e2e_mvp_main_path.sh` 供 compose 实跑；M4 仍 ⚠️ |
 
 ### 验收口径说明
 

@@ -37,7 +37,8 @@ pip install -r requirements-test.txt
 - 2026-08-19：`bash scripts/drill_jwt_rotation.sh` → **JWT 轮换/回滚演练通过**。
 - 2026-08-19：`bash scripts/drill_backup_restore.sh` → **PASSED**。
 - 2026-08-19：`bash scripts/e2e_cdc_watch_kafka.sh` → watch **2** + kafka **4 passed**。
-- 2026-08-19：`python scripts/check_alerts.py` → 本地门禁 OK（核心 vector/state；kg 降级为 WARN）。
+- 2026-08-20：`tests/test_mvp_main_path.py` → **1 passed**（login→upload→task→QA TestClient）。
+- 2026-08-20：`bash scripts/e2e_mvp_main_path.sh` → API 未启动时 **SKIP**（不把环境缺失当失败）。
 
 ## 断存储 E2E（P0-2，会短暂 stop 容器）
 
@@ -71,3 +72,13 @@ bash scripts/e2e_tenant_neo4j.sh
 - 需要本机 Neo4j 可达（默认 `bolt://localhost:7687`，与 `.env` 一致）。
 - 默认全量单测会 **skip** 该用例；仅 `RUN_NEO4J_E2E=1` 时执行。
 - 2026-08-15 验收：1 passed。
+
+## M4 主链路 E2E（可选，需 API 已启动）
+
+```bash
+cd project/code/python
+ADMIN_PASS='...' bash scripts/e2e_mvp_main_path.sh
+```
+
+- 默认全量单测会 **skip** `test_mvp_main_path_e2e.py`；仅 `RUN_MVP_E2E=1` 且 `/api/health` 可达时执行。
+- 契约单测（无 LLM）：`tests/test_mvp_main_path.py`，随全量套件跑。
