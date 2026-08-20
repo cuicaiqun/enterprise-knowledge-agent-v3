@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o"
     embedding_model: str = "text-embedding-3-small"
-    # openai | local | auto（auto：base_url 含 deepseek 用本地，否则走 OpenAI 兼容接口）
+    # openai | local | chroma | auto
+    # openai = OpenAI-compatible /embeddings (must work; chat-only gateways 404)
+    # local = text2vec subprocess; chroma = ONNX MiniLM offline
+    # auto = deepseek URL → local else openai; probe failure → chroma fallback
     embedding_backend: str = "auto"
 
     # Neo4j

@@ -120,6 +120,8 @@ services:
       QA_CHECKPOINT_PATH: /app/data/qa_checkpoints.sqlite
       INGEST_QUEUE: arq
       INGEST_ASYNC: "true"
+      # Prefer chroma/local when chat gateway has no /embeddings; override via .env
+      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-chroma}
     depends_on:
       - neo4j
       - chromadb
@@ -158,6 +160,7 @@ services:
       QA_CHECKPOINT_BACKEND: sqlite
       QA_CHECKPOINT_PATH: /app/data/qa_checkpoints.sqlite
       INGEST_QUEUE: arq
+      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-chroma}
     depends_on:
       - redis
       - postgres

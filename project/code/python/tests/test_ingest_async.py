@@ -157,9 +157,26 @@ def _api_client(tmp_path: Path, monkeypatch):
     async def _noop_close():
         return None
 
+    def _fake_refresh():
+        main_mod.vector_store._embeddings = _FakeEmb()
+        main_mod.vector_store._embeddings_probe = {"status": "ok", "backend": "test"}
+        return main_mod.vector_store._embeddings_probe
+
+    class _FakeEmb:
+        def embed_query(self, text):
+            return [0.1] * 8
+
+        async def aembed_query(self, text):
+            return [0.1] * 8
+
+        async def aembed_documents(self, texts):
+            return [[0.1] * 8 for _ in texts]
+
     monkeypatch.setattr(main_mod.vector_store, "init", _noop_init)
+    monkeypatch.setattr(main_mod.vector_store, "refresh_embeddings_probe", _fake_refresh)
     monkeypatch.setattr(main_mod.knowledge_graph, "init", _noop_init)
     monkeypatch.setattr(main_mod.knowledge_graph, "close", _noop_close)
+    _fake_refresh()
 
     return TestClient(main_mod.app), main_mod
 

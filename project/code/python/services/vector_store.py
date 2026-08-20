@@ -85,20 +85,27 @@ class _ChromaOnnxEmbeddings:
 
 
 def _create_embeddings():
-    """根据配置创建 Embedding 实例。
+    """根据配置创建 Embedding 实例，并对远程后端做最小探针。
 
     backend:
-      - openai: OpenAI 兼容接口
+      - openai: OpenAI 兼容 /embeddings（须真实可用）
       - local: text2vec 子进程
       - chroma: Chroma ONNX MiniLM（离线可用）
-      - auto: deepseek URL → local，否则 openai；失败再降级 chroma
+      - auto: deepseek URL → local，否则 openai；构造或探针失败再降级 chroma
+
+    返回 (embeddings|None, probe_dict)。
     """
-    import logging
     import os
 
-    logger = logging.getLogger(__name__)
+    from services.embeddings_ready import EMBEDDING_SETUP_HINT, probe_embedding_client
+
     if os.environ.get("DISABLE_LOCAL_EMBEDDINGS") == "1":
-        return None
+        return None, {
+            "status": "skipped",
+            "backend": "disabled",
+            "error": "DISABLE_LOCAL_EMBEDDINGS=1",
+            "hint": EMBEDDING_SETUP_HINT,
+        }
     backend = (settings.embedding_backend or "auto").strip().lower()
 
     def _openai():
@@ -108,20 +115,95 @@ def _create_embeddings():
             base_url=settings.openai_base_url,
         )
 
-    if backend == "openai":
-        return _openai()
-    if backend == "local":
-        return _SubprocessEmbeddings()
-    if backend in {"chroma", "onnx"}:
-        return _ChromaOnnxEmbeddings()
+    def _probe(client: Any, name: str) -> tuple[Any | None, dict]:
+        result = probe_embedding_client(client)
+        result["backend"] = name
+        if result.get("status") == "ok":
+            return client, result
+        return None, result
 
-    # auto
-    prefer_local = "deepseek" in settings.openai_base_url.lower()
+    if backend == "openai":
+        try:
+            client = _openai()
+        except Exception as exc:
+            logger.exception("OpenAI embeddings construct failed")
+            return None, {
+                "status": "unavailable",
+                "backend": "openai",
+                "error": f"{type(exc).__name__}: {exc}",
+                "hint": EMBEDDING_SETUP_HINT,
+            }
+        return _probe(client, "openai")
+
+    if backend == "local":
+        try:
+            client = _SubprocessEmbeddings()
+        except Exception as exc:
+            logger.exception("Local embeddings failed")
+            return None, {
+                "status": "unavailable",
+                "backend": "local",
+                "error": f"{type(exc).__name__}: {exc}",
+                "hint": EMBEDDING_SETUP_HINT,
+            }
+        return _probe(client, "local")
+
+    if backend in {"chroma", "onnx"}:
+        try:
+            client = _ChromaOnnxEmbeddings()
+        except Exception as exc:
+            logger.exception("Chroma ONNX embeddings failed")
+            return None, {
+                "status": "unavailable",
+                "backend": "chroma",
+                "error": f"{type(exc).__name__}: {exc}",
+                "hint": EMBEDDING_SETUP_HINT,
+            }
+        return _probe(client, "chroma")
+
+    # auto: prefer local for deepseek chat URLs; else openai; always fall back to chroma
+    prefer_local = "deepseek" in (settings.openai_base_url or "").lower()
+    primary_name = "local" if prefer_local else "openai"
     try:
-        return _SubprocessEmbeddings() if prefer_local else _openai()
-    except Exception:
-        logger.exception("Primary embedding backend failed; falling back to Chroma ONNX")
-        return _ChromaOnnxEmbeddings()
+        primary = _SubprocessEmbeddings() if prefer_local else _openai()
+        client, probe = _probe(primary, primary_name)
+        if client is not None:
+            return client, probe
+        logger.warning(
+            "Primary embedding backend %s probe failed (%s); falling back to Chroma ONNX",
+            primary_name,
+            probe.get("error"),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Primary embedding backend %s failed (%s); falling back to Chroma ONNX",
+            primary_name,
+            exc,
+        )
+        probe = {
+            "status": "unavailable",
+            "backend": primary_name,
+            "error": f"{type(exc).__name__}: {exc}",
+            "hint": EMBEDDING_SETUP_HINT,
+        }
+
+    try:
+        client = _ChromaOnnxEmbeddings()
+        chroma_client, chroma_probe = _probe(client, "chroma")
+        if chroma_client is not None:
+            chroma_probe["fallback_from"] = primary_name
+            chroma_probe["primary_error"] = probe.get("error")
+            return chroma_client, chroma_probe
+        return None, chroma_probe
+    except Exception as exc:
+        logger.exception("Chroma ONNX fallback failed")
+        return None, {
+            "status": "unavailable",
+            "backend": "chroma",
+            "error": f"{type(exc).__name__}: {exc}",
+            "hint": EMBEDDING_SETUP_HINT,
+            "primary_error": probe.get("error"),
+        }
 
 
 class VectorStoreService:
@@ -131,6 +213,7 @@ class VectorStoreService:
 
     def __init__(self) -> None:
         self._embeddings: Any = None
+        self._embeddings_probe: dict[str, Any] = {"status": "pending"}
         self._store: Any = None
         self._backend = settings.vector_store_type
         from concurrent.futures import ThreadPoolExecutor
@@ -173,17 +256,41 @@ class VectorStoreService:
 
     @property
     def embeddings(self):
-        if self._embeddings is None:
+        if self._embeddings is None and self._embeddings_probe.get("status") == "pending":
             import os
             # Skip HuggingFace embedding model if it causes instability
             # Use DISABLE_LOCAL_EMBEDDINGS=1 to force LLM-only mode
             if os.environ.get("DISABLE_LOCAL_EMBEDDINGS") == "1":
+                self._embeddings_probe = {
+                    "status": "skipped",
+                    "backend": "disabled",
+                    "error": "DISABLE_LOCAL_EMBEDDINGS=1",
+                }
                 return None
             try:
-                self._embeddings = _create_embeddings()
-            except Exception:
+                client, probe = _create_embeddings()
+                self._embeddings = client
+                self._embeddings_probe = probe
+            except Exception as exc:
                 self._embeddings = None
+                self._embeddings_probe = {
+                    "status": "unavailable",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
         return self._embeddings
+
+    @property
+    def embeddings_probe(self) -> dict[str, Any]:
+        # Touch embeddings to populate probe lazily
+        _ = self.embeddings
+        return dict(self._embeddings_probe or {})
+
+    def refresh_embeddings_probe(self) -> dict[str, Any]:
+        """强制重建并探测 embeddings（启动 / health 用）。"""
+        self._embeddings = None
+        self._embeddings_probe = {"status": "pending"}
+        _ = self.embeddings
+        return self.embeddings_probe
 
     @property
     def embeddings_available(self) -> bool:

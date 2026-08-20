@@ -159,7 +159,7 @@ curl -sS -X POST "$BASE/api/qa/ask" \
 | 非企业可售 | P0 企业验收未清零（平台管理员模型、跨存储两阶段、公网证书/KMS、SSO/多副本 HA 等） |
 | 前端是演示台 | 静态页：登录、上传、问答、管理员用户/审计；不是完整企业工作台 |
 | LLM 依赖 | 空 key 或网关不可用 → 入库/问答 **503** |
-| 嵌入 | `DISABLE_LOCAL_EMBEDDINGS=1` 会关掉本地模型；演示需 embeddings 可用（OpenAI / chroma ONNX / local） |
+| 嵌入 | 演示必须 embeddings 可用。三选一：`(A)` `EMBEDDING_BACKEND=openai` 且 BASE_URL 有 `/embeddings`；`(B)` `local`；`(C)` `chroma`（ONNX）。`DISABLE_LOCAL_EMBEDDINGS=1` 仅用于单测。启动会探针；不可用 → health `degraded` + 上传 **503**（禁止静默 queued 后 failed） |
 | 空库 / 不可信答案 | 空库拦截提问；`grounded=false` 默认拒答，不是「什么都答」 |
 | 检索门控 | 仅 `ready` 文档可检索；入库断向量或图谱一端不得 ready |
 | Chroma | HTTP 客户端 + 线程池；依赖 Chroma 服务。无服务时 health 可能 degraded、检索空洞 |
@@ -169,7 +169,8 @@ curl -sS -X POST "$BASE/api/qa/ask" \
 | CDC | watchdog/Kafka 可演示增量；集群强杀不丢消息仍未验收 |
 | 密钥 | `.env.example` 弱口令仅本地；生产必须强密钥且勿提交 |
 | 限流 | QA 默认用户 30/分钟、租户 120/分钟，超限 429 |
-| 本机 Clash TUN + Docker | 宿主机能调 LLM、bridge 容器超时：dev overlay 已让 `api`/`ingest-worker` 用 `network_mode: host`（依赖走本机映射端口）。生产勿依赖本机 TUN；须保证运行面 egress 可达 LLM |
+| 本机 Clash TUN + Docker | 宿主机能调 LLM、bridge 容器超时：dev overlay 已让 `api`/`ingest-worker` 用 `network_mode: host`（依赖走本机映射端口）。**生产勿把 host network 当方案**；须从 **容器/Pod 内** 验 LLM+embedding egress |
+| ingest-worker | 与 API **同发布**；`INGEST_QUEUE=arq` 时 health 看 worker 心跳与队列深度；worker 不可见 → health `degraded` |
 
 **本机 TUN 截断 Docker 出网时：** 务必带上 `docker-compose.dev.yml` 再 `up`；仅生产 compose（纯 bridge）在此环境下会卡死 ingest/QA。
 
