@@ -7,7 +7,7 @@
 
 **事实：** 主链路代码在 `project/code/python/`，演示 UI 为 `static/`，编排见 `project/code/docker-compose.yml`。
 **假设：** 本机已安装 Docker Compose，并能访问 OpenAI 兼容网关。
-**待确认：** 本机是否已用 compose 完整走通一次（ROADMAP **M4** 仍为部分完成）。
+**待确认：** 是否在目标部署拓扑上用 **纯 bridge** compose（无 host network）跑通一次（脚本：`python/scripts/e2e_m4_compose_bridge.sh`）。无 Docker / bridge 损坏时不得宣称 compose 同构通过。
 
 ---
 
@@ -44,7 +44,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file python
 curl -sS http://127.0.0.1:8080/api/health
 ```
 
-验收：`/api/health` 返回 JSON。核心依赖（向量 + 状态库）正常时 HTTP 200、`status=ok`；否则 503、`status=degraded`。
+验收：`/api/health` 返回 JSON。核心依赖（向量 + 状态库 + embeddings）正常时 HTTP 200、`status=ok`；否则 503、`status=degraded`。
+
+**生产同构（bridge，勿用 host network）：**
+
+```bash
+cd project/code
+# 仅 docker-compose.yml；从容器内验 LLM+embedding
+bash python/scripts/e2e_m4_compose_bridge.sh
+```
 
 打开：
 
