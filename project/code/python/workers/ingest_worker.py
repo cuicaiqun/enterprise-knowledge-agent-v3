@@ -44,10 +44,12 @@ async def startup(ctx: dict) -> None:
         knowledge_graph=knowledge_graph,
         state_store=state_store,
     )
+    # Ingest worker only needs ingest/update pipelines — skip QA (avoids checkpointer deps).
     workflows = build_knowledge_graph_workflow(
         vector_store=vector_store,
         knowledge_graph=knowledge_graph,
         update_agent=update_agent,
+        pipelines=("ingest", "update"),
     )
     bind_ingest_runtime(job_store=job_store, state_store=state_store, workflows=workflows)
     ctx["state_store"] = state_store

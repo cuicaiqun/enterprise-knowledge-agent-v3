@@ -169,6 +169,9 @@ curl -sS -X POST "$BASE/api/qa/ask" \
 | CDC | watchdog/Kafka 可演示增量；集群强杀不丢消息仍未验收 |
 | 密钥 | `.env.example` 弱口令仅本地；生产必须强密钥且勿提交 |
 | 限流 | QA 默认用户 30/分钟、租户 120/分钟，超限 429 |
+| 本机 Clash TUN + Docker | 宿主机能调 LLM、bridge 容器超时：dev overlay 已让 `api`/`ingest-worker` 用 `network_mode: host`（依赖走本机映射端口）。生产勿依赖本机 TUN；须保证运行面 egress 可达 LLM |
+
+**本机 TUN 截断 Docker 出网时：** 务必带上 `docker-compose.dev.yml` 再 `up`；仅生产 compose（纯 bridge）在此环境下会卡死 ingest/QA。
 
 相关运维页（非本手册范围）：`09_deployment/tls_and_secret_rotation.md`、`alerting.md`、`backup_restore.md`；单测入口：`07_testing/unit_test_entry.md`。
 

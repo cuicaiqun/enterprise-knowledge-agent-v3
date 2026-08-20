@@ -87,14 +87,16 @@ def build_knowledge_graph_workflow(
     vector_store: VectorStoreService | None = None,
     knowledge_graph: KnowledgeGraphService | None = None,
     update_agent: KnowledgeUpdateAgent | None = None,
+    pipelines: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
     """
-    构建三条编排流水线，返回 {"ingest": graph, "qa": graph, "update": graph}
+    构建编排流水线，默认返回 {"ingest", "qa", "update"}。
+    ingest worker 可传 pipelines=("ingest","update")，避免编译 QA（无需 checkpointer）。
     """
+    wanted = set(pipelines or ("ingest", "qa", "update"))
     doc_parser = DocParserAgent()
     extractor = KnowledgeExtractAgent()
-    qa_agent = QAAgent(vector_store=vector_store, knowledge_graph=knowledge_graph)
-    if update_agent is None:
+    if update_agent is None and "update" in wanted:
         update_agent = KnowledgeUpdateAgent(
             doc_parser=doc_parser,
             knowledge_extractor=extractor,
@@ -102,11 +104,17 @@ def build_knowledge_graph_workflow(
             knowledge_graph=knowledge_graph,
         )
 
-    return {
-        "ingest": _build_ingest_graph(doc_parser, extractor, vector_store, knowledge_graph),
-        "qa": _build_qa_graph(qa_agent),
-        "update": _build_update_graph(update_agent),
-    }
+    out: dict[str, Any] = {}
+    if "ingest" in wanted:
+        out["ingest"] = _build_ingest_graph(
+            doc_parser, extractor, vector_store, knowledge_graph
+        )
+    if "qa" in wanted:
+        qa_agent = QAAgent(vector_store=vector_store, knowledge_graph=knowledge_graph)
+        out["qa"] = _build_qa_graph(qa_agent)
+    if "update" in wanted:
+        out["update"] = _build_update_graph(update_agent)
+    return out
 
 
 # ── Ingest Pipeline ─────────────────────────────────────────

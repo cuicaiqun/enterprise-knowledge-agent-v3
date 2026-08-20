@@ -23,15 +23,57 @@
 | **M1** | 全量单元测试稳定通过 | `cd project/code/python && REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 UPDATE_MODE=off bash scripts/run_unit_tests.sh` → 0 failed | ✅ | 08-19：114 passed / 14 skipped（M8 回归） |
 | **M2** | 部署 / 密钥门禁 | `python project/code/python/scripts/check_p0_3_deploy.py` → OK | ✅ | 08-19 deploy check OK |
 | **M3** | P0 安全隔离 E2E | `e2e_tenant_neo4j.sh` + `e2e_neo4j_readonly.sh` passed | ✅ | 08-19 双租户 1 passed；只读 2 passed |
-| **M4** | 入库 → 检索 → 问答主链路 | 上传 + ingest + QA API 有单测覆盖；可本地/compose 演示一次完整路径 | ⚠️ | 单测覆盖有；步骤见 `docs/MVP_demo_guide.md`；缺本机 compose 走通日志 |
+| **M4** | 入库 → 检索 → 问答主链路 | 上传 + ingest + QA API 有单测覆盖；可本地/compose 演示一次完整路径 | ⚠️ | 08-20：health/登录/上传 202 已通；ingest **failed**（聊天网关无 Embeddings API → 404）；QA 502。根因见下方「可上线 MVP 阻塞」 |
 | **M5** | 异步入库 + 任务状态 | `/api/ingest/tasks` 相关单测绿 | ✅ | `test_ingest_async.py` 等 |
 | **M6** | 认证 + ACL 基线 | JWT 登录/撤销/文档 ACL 单测绿 | ⚠️ | P0-4 单测绿；SSO / 多副本 HA 非 MVP 范围 |
 | **M7** | CI 与本地测试入口一致 | `.github/workflows/ci.yml` 调用 `run_unit_tests.sh` | ✅ | 08-15 CI 对齐 |
 | **M8** | MVP 演示手册 | `project/docs/` 下独立页：启动步骤、演示路径、已知限制 | ✅ | 08-19 `project/docs/MVP_demo_guide.md` |
 
-**MVP 总状态：⚠️ 接近完成（M8 已验收；阻塞：M4 本机 compose 走通 + M6 仍 ⚠️）**
+**MVP 总状态：⚠️ 未达标（阻塞：M4 主链路未完整 succeeded；M6 仍 ⚠️）**
 
-**MVP 达标后下一刀：** 从 [Post-MVP Backlog](#post-mvp--ai-engineering-backlog) 取 **B2**（统一降级；B1 记忆为后续）。未全 ✅ 前禁止开 B 系列大改。
+**面向可上线 MVP 的下一刀（按优先级，勿开 Post-MVP B 大改）：**
+
+1. **关掉 M4：** 选定可验收的 embedding 路径（独立 embedding 网关 **或** 默认 `EMBEDDING_BACKEND=local|chroma` + 镜像含模型），在与生产同构网络下跑通 upload→ingest `succeeded`→QA `200/grounded`，把日志贴回本表。
+2. **运行面契约：** 文档 + 启动探针声明「chat ≠ embeddings」「worker 必须活着」「生产 egress 必须从运行 API/worker 的网络验证」。
+3. **M6 口径：** MVP 接受「JWT/ACL 单测绿」为 ✅，SSO/HA 明确标延后；或保持 ⚠️ 但写清「不阻塞对外演示」。
+
+---
+
+## 可上线 MVP 阻塞：本质问题（2026-08-20 联调沉淀）
+
+> **目的：** 把「本机联调翻车」翻译成**产品上线必须闭环的依赖契约**，避免只修一次演示环境。  
+> **证据环境：** compose + LLM 网关实跑；health ok → 上传 202 → 任务 `49643c07…` failed → QA 502。  
+> **不是：** 「换个 API Key 就能上线」；密钥可用时仍可能因网络或 embeddings 能力缺口挂掉主链路。
+
+### 本质分层
+
+| # | 表象 | 本质（上线视角） | 为何卡 MVP | 已做缓解 | 上线仍必须做 |
+|---|------|------------------|------------|----------|--------------|
+| 1 | 宿主机 `curl /models` 通，bridge 容器调 LLM 超时 | **运行面 egress ≠ 开发机浏览器/宿主机出网**。本机 Clash/Mihomo TUN 截断 Docker bridge；生产常见等价物是安全组/NAT/无出网/未注入代理 | 演示与生产若网络模型不一致，会「开发机能答、上线全超时」 | `docker-compose.dev.yml`：`api`/`ingest-worker` `network_mode: host`（**仅本机绕行**）；手册注明 TUN 风险 | 生产用 bridge/K8s 时做 **从 Pod/容器发起的** LLM+embedding 连通性验收；禁止只测宿主机 |
+| 2 | ingest `store_vectors`：`Embeddings API is not supported`（404） | **Chat 兼容网关 ≠ Embedding 能力**。`EMBEDDING_BACKEND=auto` 非 deepseek URL 时走 OpenAI Embeddings；很多国产/聚合网关只开 chat | 无向量则文档不得 `ready`，QA 空检索/502 —— **主链路断裂** | 联调侧拟默认 `EMBEDDING_BACKEND=local`；dev overlay 已注入 | **产品默认策略**：生产文档写清三选一——(A) 提供可用 `/embeddings` 的 base_url/model；(B) 镜像内 local/ONNX 并验收冷启动；(C) 启动时探测 embeddings，失败则 health 降级且拒绝接受 ingest |
+| 3 | `ingest-worker` 曾直接退出；任务长期 `queued` / arq job expired | **异步入库把正确性绑在 worker 进程上**；worker 因编译 QA graph 缺 checkpointer 崩溃 = 静默积压 | 上传 202 给用户「成功错觉」，后台不消费 | worker 只编译 `pipelines=("ingest","update")`，不再强依赖 QA checkpointer | compose/K8s：**worker 副本与 API 同发布**；health/metrics 暴露队列深度与 worker up；积压告警（对齐 B2/B5，MVP 至少要有「worker 挂了可见」） |
+| 4 | health 里 `knowledge_graph_live: AuthError`，整体仍可能 `status=ok` | **聚合 health 与读写路径不一致**；只读账户/口令漂移时 live 探针失败但业务可能半残 | 运维误判「系统正常」 | 既有 live 字段 | MVP 验收：核心依赖 live 失败 → HTTP 503 或明确 `degraded` 且前端/手册禁止对外演示（对齐 B2） |
+| 5 | 单测绿 ≠ compose 主链路绿 | **Mock/关 embedding 的 CI 路径覆盖不了真实网关能力矩阵** | 宣称 MVP 可演示但无真实 succeeded 证据 | M1/M8 已绿；M4 仍 ⚠️ | M4 关闭条件写死：**真实 compose + 真实 LLM/embedding 一次 succeeded 日志** |
+
+### 对「可上线 MVP」的结论（非企业可售）
+
+- **可以称为演示 MVP 的前提：** M4 在目标部署拓扑上出现一次 `upload 202 → task succeeded（含 chunks）→ QA 200`，且 embeddings 策略已写入 `.env.example` / 部署文档。  
+- **当前尚未达到：** 聊天可用但 embedding 不可用时，系统仍接受上传并最终 failed —— 对用户不友好，也不符合「可上线」口径。  
+- **明确非本迭代范围（勿膨胀）：** 关全机 Clash、KMS、SSO、完整 chaos、企业工作台。
+
+### 2026-08-20 执行记录（M4 实跑 + 根因入库）
+
+**角色：** 运维 / QA（联调）+ 迭代 PM（把问题升格为 MVP 门禁）
+
+**已完成：**
+
+1. 拉取 `enterprise-knowledge-agent-v3` 最新（含 M8 手册）。
+2. 诊断并绕过本机 Docker bridge 出网：`docker-compose.dev.yml` host network + localhost 依赖端口。
+3. 修复 ingest-worker 启动：`build_knowledge_graph_workflow(..., pipelines=("ingest","update"))`。
+4. 按 `MVP_demo_guide.md` 实跑：health `ok`；登录 ok；上传 **202** `task_id=49643c07…`；任务 **failed**（Embeddings 404）；QA **502**。证据目录（本机）：`/tmp/mvp-e2e-evidence-final/`。
+5. 将上述根因写入本节；M4 保持 ⚠️（有失败证据，禁止标 ✅）。
+
+**下一刀：** 落地「embeddings 默认可用」配置 + 再跑通 M4；同步启动探针/文档契约。
 
 ---
 
@@ -43,8 +85,8 @@
 | 优先级 | ID | 主题 | 目标（可验收） | 非目标 | 依赖 ROADMAP | 状态 |
 |--------|-----|------|----------------|--------|--------------|------|
 | 1 | **B1** | **记忆系统** | 用户级长期记忆（Postgres/向量摘要）+ 与会话 checkpointer 分层；QA 可引用记忆；有单测 | 完整 mem0 克隆、跨产品记忆联邦 | P0-4 会话持久 | ❌ |
-| 2 | **B2** | **容错与优雅降级** | 统一依赖健康矩阵（Neo4j/Chroma/Postgres/LLM）；health→503 与 QA 行为一致；消除 silent `except: pass` | 全链路 chaos 工程 | P1-3 告警 | ⚠️ 部分（LLM retry/health 已有） |
-| 3 | **B3** | **高并发与吞吐** | 生产默认 `arq`+Redis 路径文档化；QA 租户配额扩展；热点路径 async 薄切片 | K8s HPA / 多区域 | P1-2 限流 | ⚠️ 部分（限流/队列已有） |
+| 2 | **B2** | **容错与优雅降级** | 统一依赖健康矩阵（Neo4j/Chroma/Postgres/LLM）；health→503 与 QA 行为一致；消除 silent `except: pass` | 全链路 chaos 工程 | P1-3 告警 | ⚠️ 部分（LLM retry/health 已有；08-20 暴露 chat≠embed / egress 契约缺口） |
+| 3 | **B3** | **高并发与吞吐** | 生产默认 `arq`+Redis 路径文档化；QA 租户配额扩展；热点路径 async 薄切片 | K8s HPA / 多区域 | P1-2 限流 | ⚠️ 部分（限流/队列已有；worker 存活可见性仍薄） |
 | 4 | **B4** | **RAG 质量工程** | grounded 引用校验加强；`eval_rag_recall.py` 可选 CI 门禁；GraphRAG 加权可配置 | 完整离线评测平台 | P2 GraphRAG | ⚠️ 部分（强制拒答已落地） |
 | 5 | **B5** | **可观测与运维** | Prometheus 规则与 runbook 对齐；audit log 与 admin UI 数据一致 | 全栈 APM / Tracing | P1-3 | ⚠️ 部分（check_alerts 已有） |
 | 6 | **B6** | **产品化薄切片** | onboarding 优化；grounded 可视化；对外合规话术与 `project/docs` 同步 | 完整企业工作台 | P1-6 | ⚠️ 部分（空库引导/审计 UI 已有） |

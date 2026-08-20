@@ -3,6 +3,11 @@
 #
 # Usage (from code/):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file python/.env up
+#
+# api / ingest-worker use network_mode: host so they share the host's egress
+# (needed when Clash/Mihomo TUN blocks Docker bridge → public HTTPS).
+# Datastores stay on the compose bridge; host-networked services reach them
+# via the published localhost ports below.
 
 services:
   neo4j:
@@ -34,9 +39,22 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
 
   api:
+    # Host network: LLM egress follows host (Clash TUN OK); ignore bridge DNS names.
+    network_mode: host
+    networks: !reset []
+    ports: !reset []
     environment:
       APP_ENV: development
       REQUIRE_STRONG_SECRETS: "false"
+      CHROMA_HOST: 127.0.0.1
+      CHROMA_PORT: "8000"
+      NEO4J_URI: bolt://127.0.0.1:7687
+      KAFKA_BOOTSTRAP_SERVERS: 127.0.0.1:29092
+      STATE_STORE_DSN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@127.0.0.1:5433/${POSTGRES_DB:-knowledge}
+      PGVECTOR_DSN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@127.0.0.1:5433/${POSTGRES_DB:-knowledge}
+      REDIS_URL: redis://127.0.0.1:6380/0
+      # Many OpenAI-compatible chat gateways lack /embeddings; use local text2vec.
+      EMBEDDING_BACKEND: local
     user: "0:0"
     volumes:
       - ./python:/app
@@ -44,9 +62,18 @@ services:
       - auth_data:/app/data
 
   ingest-worker:
+    network_mode: host
+    networks: !reset []
     environment:
       APP_ENV: development
       REQUIRE_STRONG_SECRETS: "false"
+      CHROMA_HOST: 127.0.0.1
+      CHROMA_PORT: "8000"
+      NEO4J_URI: bolt://127.0.0.1:7687
+      STATE_STORE_DSN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@127.0.0.1:5433/${POSTGRES_DB:-knowledge}
+      PGVECTOR_DSN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@127.0.0.1:5433/${POSTGRES_DB:-knowledge}
+      REDIS_URL: redis://127.0.0.1:6380/0
+      EMBEDDING_BACKEND: local
     user: "0:0"
     volumes:
       - ./python:/app
