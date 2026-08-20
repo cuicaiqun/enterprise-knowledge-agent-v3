@@ -2,6 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Optional: pass --build-arg HTTP_PROXY=... when apt/pip cannot reach the internet
+# (common with Clash/Mihomo TUN + Docker bridge). Prefer also:
+#   docker build --network=host ...
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG http_proxy
+ARG https_proxy
+ARG NO_PROXY
+ARG no_proxy
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr tesseract-ocr-chi-sim poppler-utils \
     && rm -rf /var/lib/apt/lists/* \

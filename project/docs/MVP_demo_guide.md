@@ -46,13 +46,19 @@ curl -sS http://127.0.0.1:8080/api/health
 
 验收：`/api/health` 返回 JSON。核心依赖（向量 + 状态库 + embeddings）正常时 HTTP 200、`status=ok`；否则 503、`status=degraded`。
 
-**生产同构（bridge，勿用 host network）：**
+**生产同构（bridge，勿用 host network 跑业务容器）：**
 
 ```bash
 cd project/code
 # 仅 docker-compose.yml；从容器内验 LLM+embedding
 bash python/scripts/e2e_m4_compose_bridge.sh
 ```
+
+**Clash/Mihomo TUN 导致 `apt` 连不上 `deb.debian.org`（`198.18.0.x`）时：**
+
+- 镜像 **构建** 已默认 `build.network: host`（只影响 build，不改变运行时 bridge）。
+- 或导出代理后再 build：`export HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=...`（端口改成你的混合端口）。
+- 已有镜像时可：`SKIP_BUILD=1 bash python/scripts/e2e_m4_compose_bridge.sh`
 
 打开：
 

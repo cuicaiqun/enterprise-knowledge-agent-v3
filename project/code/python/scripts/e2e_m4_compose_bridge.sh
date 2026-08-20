@@ -5,7 +5,12 @@
 # Usage (from project/code/):
 #   bash python/scripts/e2e_m4_compose_bridge.sh
 #
-# Requires: Docker daemon with working bridge networking; python/.env with secrets.
+# Requires: Docker daemon; python/.env with secrets.
+# Build note: compose sets build.network=host so apt works under Clash TUN;
+#             runtime containers still use the bridge network (isomorphic check).
+# Optional:
+#   HTTP_PROXY / HTTPS_PROXY  — passed into image build for apt/pip
+#   SKIP_BUILD=1              — reuse existing images (up -d without --build)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"  # project/code
@@ -27,8 +32,14 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 2
 fi
 
-echo "== bring up bridge stack (no host-network overlay) =="
-docker compose -f docker-compose.yml --env-file "$ENV_FILE" up -d --build
+echo "== bring up bridge stack (runtime=bridge; build may use host net) =="
+if [[ "${SKIP_BUILD:-0}" == "1" ]]; then
+  docker compose -f docker-compose.yml --env-file "$ENV_FILE" up -d
+else
+  # Explicit build first so TUN users see apt errors early; compose build.network=host.
+  docker compose -f docker-compose.yml --env-file "$ENV_FILE" build api ingest-worker
+  docker compose -f docker-compose.yml --env-file "$ENV_FILE" up -d
+fi
 
 cleanup() {
   docker compose -f docker-compose.yml --env-file "$ENV_FILE" down >/dev/null 2>&1 || true

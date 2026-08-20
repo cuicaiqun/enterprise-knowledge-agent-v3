@@ -95,6 +95,15 @@ services:
     build:
       context: ./python
       dockerfile: Dockerfile
+      # Build uses host net so apt/pip work under Clash TUN; runtime remains bridge.
+      network: host
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        http_proxy: ${HTTP_PROXY:-}
+        https_proxy: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        no_proxy: ${NO_PROXY:-}
     container_name: agenthub-api
     ports:
       - "8080:8080"
@@ -138,6 +147,14 @@ services:
     build:
       context: ./python
       dockerfile: Dockerfile
+      network: host
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        http_proxy: ${HTTP_PROXY:-}
+        https_proxy: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        no_proxy: ${NO_PROXY:-}
     container_name: agenthub-ingest-worker
     command: ["arq", "workers.ingest_worker.WorkerSettings"]
     env_file:
