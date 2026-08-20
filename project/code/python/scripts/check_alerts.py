@@ -46,11 +46,17 @@ def check_health(base: str) -> list[str]:
     if data.get("status") != "ok":
         alerts.append(f"health status={data.get('status')!r}")
     deps = data.get("dependencies") or {}
-    # 与 api/main.py health 一致：核心面仅 vector + state
+    # 与 api/main.py health 一致：核心面 vector + state + embeddings
     for name in ("vector_store_live", "state_store_live"):
         val = deps.get(name)
         if val not in (None, "ok"):
             alerts.append(f"core dependency {name}={val!r}")
+    emb = deps.get("embeddings")
+    if emb not in (None, "ok"):
+        alerts.append(f"core dependency embeddings={emb!r}")
+    worker = deps.get("ingest_worker")
+    if worker == "down":
+        alerts.append("ingest_worker down (queue will stall)")
     return alerts
 
 

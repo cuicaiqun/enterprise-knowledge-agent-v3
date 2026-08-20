@@ -20,22 +20,21 @@
 
 | ID | 门禁项 | 验收命令 / 证据 | 状态 | 最近证据 |
 |----|--------|-----------------|------|----------|
-| **M1** | 全量单元测试稳定通过 | `cd project/code/python && REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 UPDATE_MODE=off bash scripts/run_unit_tests.sh` → 0 failed | ✅ | 08-19：114 passed / 14 skipped（M8 回归） |
-| **M2** | 部署 / 密钥门禁 | `python project/code/python/scripts/check_p0_3_deploy.py` → OK | ✅ | 08-19 deploy check OK |
+| **M1** | 全量单元测试稳定通过 | `cd project/code/python && REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 UPDATE_MODE=off bash scripts/run_unit_tests.sh` → 0 failed | ✅ | 08-20：123 passed / 14 skipped（含 embeddings 探针单测） |
+| **M2** | 部署 / 密钥门禁 | `python project/code/python/scripts/check_p0_3_deploy.py` → OK | ✅ | 08-20 deploy check OK |
 | **M3** | P0 安全隔离 E2E | `e2e_tenant_neo4j.sh` + `e2e_neo4j_readonly.sh` passed | ✅ | 08-19 双租户 1 passed；只读 2 passed |
-| **M4** | 入库 → 检索 → 问答主链路 | 上传 + ingest + QA API 有单测覆盖；可本地/compose 演示一次完整路径 | ⚠️ | 08-20：health/登录/上传 202 已通；ingest **failed**（聊天网关无 Embeddings API → 404）；QA 502。根因见下方「可上线 MVP 阻塞」 |
+| **M4** | 入库 → 检索 → 问答主链路 | 上传 + ingest + QA API 有单测覆盖；可本地/compose 演示一次完整路径 | ✅ | 08-20 Cloud：无 Docker；`EMBEDDING_BACKEND=chroma` + 本机 chroma/neo4j + uvicorn。health ok（embeddings probe chroma/384）；upload **202** `task_id=bfeedf9f…`；task **succeeded** `chunks_count=1`；QA **200** `grounded=true`。网关 `/embeddings` 404 → 走 chroma。redacted 证据：`/opt/cursor/artifacts/m4_e2e/` |
 | **M5** | 异步入库 + 任务状态 | `/api/ingest/tasks` 相关单测绿 | ✅ | `test_ingest_async.py` 等 |
-| **M6** | 认证 + ACL 基线 | JWT 登录/撤销/文档 ACL 单测绿 | ⚠️ | P0-4 单测绿；SSO / 多副本 HA 非 MVP 范围 |
+| **M6** | 认证 + ACL 基线 | JWT 登录/撤销/文档 ACL 单测绿 | ✅ | 08-20：`test_auth_api` + `test_auth_acl` + `test_p0_4_auth_session` + `test_qa_acl` → **15 passed**。SSO / 多副本 HA **明确延后（非 MVP）** |
 | **M7** | CI 与本地测试入口一致 | `.github/workflows/ci.yml` 调用 `run_unit_tests.sh` | ✅ | 08-15 CI 对齐 |
-| **M8** | MVP 演示手册 | `project/docs/` 下独立页：启动步骤、演示路径、已知限制 | ✅ | 08-19 `project/docs/MVP_demo_guide.md` |
+| **M8** | MVP 演示手册 | `project/docs/` 下独立页：启动步骤、演示路径、已知限制 | ✅ | 08-19 `project/docs/MVP_demo_guide.md`（08-20 补 embeddings 三选一 / worker / egress） |
 
-**MVP 总状态：⚠️ 未达标（阻塞：M4 主链路未完整 succeeded；M6 仍 ⚠️）**
+**MVP 总状态：✅ Phase A 门禁已齐（M1–M8）。企业可售仍受 P0 剩余项约束；SSO/HA / compose bridge 同构为延后验收。**
 
 **面向可上线 MVP 的下一刀（按优先级，勿开 Post-MVP B 大改）：**
 
-1. **关掉 M4：** 选定可验收的 embedding 路径（独立 embedding 网关 **或** 默认 `EMBEDDING_BACKEND=local|chroma` + 镜像含模型），在与生产同构网络下跑通 upload→ingest `succeeded`→QA `200/grounded`，把日志贴回本表。
-2. **运行面契约：** 文档 + 启动探针声明「chat ≠ embeddings」「worker 必须活着」「生产 egress 必须从运行 API/worker 的网络验证」。
-3. **M6 口径：** MVP 接受「JWT/ACL 单测绿」为 ✅，SSO/HA 明确标延后；或保持 ⚠️ 但写清「不阻塞对外演示」。
+1. **compose bridge 同构验收：** 在桥接网络可用的环境跑 `python/scripts/e2e_m4_compose_bridge.sh`（**禁止**用 `docker-compose.dev.yml` host network 代替）。本 Cloud VM 已尝试：容器间 TCP 超时 → 失败证据见 ROADMAP 08-20 记录。
+2. **P0 剩余薄切片**（按企业验收，非演示 MVP 阻塞）。
 
 ---
 
@@ -74,6 +73,50 @@
 5. 将上述根因写入本节；M4 保持 ⚠️（有失败证据，禁止标 ✅）。
 
 **下一刀：** 落地「embeddings 默认可用」配置 + 再跑通 M4；同步启动探针/文档契约。
+
+### 2026-08-20 执行记录（关掉 M4：embeddings 契约 + 实跑）
+
+**角色：** backend_engineer + devops（总控严格模式；用户指定只关 M4）
+
+**环境限制：** Cursor Cloud **无 Docker**；OPENAI_* Secrets 可用但网关 **`/embeddings` → 404**。用 `chroma run` + Neo4j community tarball + `uvicorn` 跑通主链路（非 compose；compose 默认已改为 `EMBEDDING_BACKEND=${EMBEDDING_BACKEND:-chroma}`）。
+
+**代码/配置：**
+
+1. `services/embeddings_ready.py`：探针 + `ensure_embeddings_ready`；upload 前 503 + 三选一 hint。
+2. `vector_store._create_embeddings`：`auto` 探针失败 → **chroma** 降级；`openai` 显式失败不静默。
+3. health：embeddings 纳入 core；`ingest_queue` 深度 / worker 可见性（local workers / arq heartbeat）。
+4. ingest-worker：写 Redis heartbeat；启动时探针 embeddings。
+5. `.env.example` / `.env.production.example` / `MVP_demo_guide.md` / compose 默认 chroma。
+
+**实跑证据（redacted，`/opt/cursor/artifacts/m4_e2e/`）：**
+
+- health `status=ok`，`embeddings_probe.backend=chroma` dims=384
+- upload HTTP **202** `task_id=bfeedf9fc5a046ae9185746a91f4d055`
+- task **succeeded**，`chunks_count=1`，`index_status=ready`
+- QA HTTP **200**，`grounded=true`，sources≥1
+- 单测：123 passed / 14 skipped；`check_p0_3_deploy.py` OK
+
+**M4 → ✅。** 下一刀：收 M6 口径；有 Docker 时补 compose bridge 同构验收。
+
+### 2026-08-20 执行记录（收 M6 口径 + compose bridge 尝试）
+
+**角色：** qa_engineer + devops
+
+**M6 口径（✅）：**
+
+- 验收命令：`REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 UPDATE_MODE=off bash scripts/run_unit_tests.sh tests/test_auth_api.py tests/test_auth_acl.py tests/test_p0_4_auth_session.py tests/test_qa_acl.py`
+- 结果：**15 passed**（JWT 登录/撤销/禁用即时失效/审计/QA ACL）
+- **明确延后：** SSO、MFA、多副本共享 checkpointer / HA —— 不挡演示 MVP
+
+**compose bridge 同构（未通过，有失败证据）：**
+
+1. 本环境安装并手动启动 `dockerd`（vfs）；`docker compose -f docker-compose.yml`（**无** `docker-compose.dev.yml`）build/up。
+2. 容器间探测：`api → redis/chromadb/neo4j` 全部 **TimeoutError**；`api → OPENAI /models` 亦超时；宿主机 egress `/models` **200**。
+3. 结论：Cloud VM **Docker bridge 网络不可用**（≠ 产品契约错误）；**禁止**用 host network 冒充 bridge 同构通过。
+4. 可复跑入口：`project/code/python/scripts/e2e_m4_compose_bridge.sh`
+5. 证据：`/opt/cursor/artifacts/m6_compose_bridge/05_bridge_failure.txt`
+
+**MVP Phase A：M1–M8 全 ✅。** 下一刀：在桥接可用环境跑通 `e2e_m4_compose_bridge.sh`，或回到 P0 企业验收薄切片。
 
 ---
 

@@ -34,6 +34,7 @@ from config import settings
 from config.secrets_guard import enforce_secrets_or_raise
 from observability.logging_config import setup_logging
 from observability.llm import LlmNotConfiguredError, ensure_llm_ready
+from services.embeddings_ready import EmbeddingsNotReadyError, ensure_embeddings_ready
 from services.qa_checkpoint import close_qa_checkpointer, init_qa_checkpointer
 
 from observability.metrics import metrics_payload, set_dependency_up
@@ -80,6 +81,7 @@ _startup_status: dict[str, Any] = {
     "state_store": "pending",
     "ingest_queue": "pending",
     "qa_checkpoint": "pending",
+    "embeddings": "pending",
 }
 
 
@@ -107,6 +109,21 @@ async def lifespan(app: FastAPI):
         _startup_status["vector_store"] = "failed"
         logger.exception("Vector store init failed")
     set_dependency_up("vector_store", _startup_status["vector_store"] == "ok")
+    try:
+        emb_probe = vector_store.refresh_embeddings_probe()
+        _startup_status["embeddings"] = emb_probe
+        set_dependency_up("embeddings", emb_probe.get("status") == "ok" or vector_store.embeddings_available)
+        if emb_probe.get("status") != "ok" and not vector_store.embeddings_available:
+            logger.error(
+                "embeddings unavailable at startup — ingest will be rejected. probe=%s",
+                emb_probe,
+            )
+        else:
+            logger.info("embeddings_probe=%s", emb_probe)
+    except Exception as exc:
+        _startup_status["embeddings"] = {"status": "unavailable", "error": str(exc)}
+        set_dependency_up("embeddings", False)
+        logger.exception("embeddings probe failed")
     try:
         await knowledge_graph.init()
         _startup_status["knowledge_graph"] = "ok"
@@ -301,6 +318,11 @@ async def upload_document(
     try:
         ensure_llm_ready()
     except LlmNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        ensure_embeddings_ready(vector_store)
+    except EmbeddingsNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     try:
@@ -757,11 +779,14 @@ async def prometheus_metrics():
 
 @app.get("/api/health", tags=["系统管理"])
 async def health():
+    emb_probe = vector_store.embeddings_probe
+    emb_ok = vector_store.embeddings_available and emb_probe.get("status") != "unavailable"
     deps = {
         "vector_store": _startup_status.get("vector_store"),
         "knowledge_graph": _startup_status.get("knowledge_graph"),
         "state_store": _startup_status.get("state_store"),
-        "embeddings": "ok" if vector_store.embeddings_available else "unavailable",
+        "embeddings": "ok" if emb_ok else "unavailable",
+        "embeddings_probe": emb_probe,
     }
     # 运行时再探测一次关键依赖
     try:
@@ -799,10 +824,33 @@ async def health():
         set_dependency_up("state_store", False)
         logger.warning("health state_store probe failed: %s", exc)
 
+    ingest_queue_stats: dict[str, Any] = {"backend": _startup_status.get("ingest_queue")}
+    if ingest_queue is not None:
+        try:
+            ingest_queue_stats = await ingest_queue.astats()
+        except Exception as exc:
+            ingest_queue_stats = {"error": f"{type(exc).__name__}: {exc}"}
+            logger.warning("health ingest_queue stats failed: %s", exc)
+    deps["ingest_queue"] = ingest_queue_stats
+    worker_visible = bool(ingest_queue_stats.get("worker_visible"))
+    # arq 模式下 worker 不可见 → 降级（禁止长期 queued 无告警）
+    queue_backend = str(ingest_queue_stats.get("backend") or _startup_status.get("ingest_queue") or "")
+    if queue_backend == "arq" and not worker_visible:
+        deps["ingest_worker"] = "down"
+    elif queue_backend == "local":
+        deps["ingest_worker"] = "ok" if worker_visible else "down"
+    else:
+        deps["ingest_worker"] = "ok" if worker_visible or queue_backend in {"local_fallback"} else "unknown"
+
     core_ok = (
         deps.get("vector_store_live") == "ok"
         and deps.get("state_store_live") == "ok"
+        and emb_ok
     )
+    # worker 挂了时不得宣称 ok（本地队列 worker 死、或 arq 无心跳）
+    if deps.get("ingest_worker") == "down":
+        core_ok = False
+
     payload = {
         "status": "ok" if core_ok else "degraded",
         "service": "com_agent_chat",
@@ -810,10 +858,11 @@ async def health():
         "state_store": getattr(state_store, "backend", "unknown"),
         "startup": dict(_startup_status),
         "dependencies": deps,
-        "ingest_queue": _startup_status.get("ingest_queue"),
+        "ingest_queue": ingest_queue_stats,
         "ingest_async": settings.ingest_async,
-        "embeddings_available": vector_store.embeddings_available,
+        "embeddings_available": emb_ok,
         "vector_store_ready": vector_store._store is not None,
+        "embedding_backend": settings.embedding_backend,
     }
     return JSONResponse(content=payload, status_code=200 if core_ok else 503)
 

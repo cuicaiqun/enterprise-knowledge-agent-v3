@@ -25,6 +25,12 @@ class IngestQueue:
     async def enqueue(self, job_id: str) -> None:
         raise NotImplementedError
 
+    def stats(self) -> dict[str, Any]:
+        return {"backend": self.backend, "worker_visible": False}
+
+    async def astats(self) -> dict[str, Any]:
+        return self.stats()
+
 
 class LocalIngestQueue(IngestQueue):
     """进程内异步队列（默认可用，不依赖 Redis）。"""
@@ -57,6 +63,16 @@ class LocalIngestQueue(IngestQueue):
     async def enqueue(self, job_id: str) -> None:
         await self._queue.put(job_id)
 
+    def stats(self) -> dict[str, Any]:
+        alive = sum(1 for t in self._workers if not t.done())
+        return {
+            "backend": self.backend,
+            "queue_depth": self._queue.qsize(),
+            "workers_configured": self._concurrency,
+            "workers_alive": alive,
+            "worker_visible": alive > 0,
+        }
+
     async def _loop(self, worker_id: int) -> None:
         while not self._stopped.is_set():
             job_id = await self._queue.get()
@@ -74,6 +90,7 @@ class ArqIngestQueue(IngestQueue):
     """Redis + arq 分布式队列。"""
 
     backend = "arq"
+    HEARTBEAT_KEY = "agenthub:ingest_worker:heartbeat"
 
     def __init__(self, redis_url: str) -> None:
         self._redis_url = redis_url
@@ -95,6 +112,35 @@ class ArqIngestQueue(IngestQueue):
         if self._redis is None:
             raise RuntimeError("Arq queue not started")
         await self._redis.enqueue_job("arq_process_ingest_job", job_id)
+
+    async def astats(self) -> dict[str, Any]:
+        """队列深度 + worker 心跳（worker 启动时写入 HEARTBEAT_KEY）。"""
+        import time
+
+        out: dict[str, Any] = {
+            "backend": self.backend,
+            "queue_depth": None,
+            "worker_visible": False,
+            "worker_heartbeat_age_s": None,
+        }
+        if self._redis is None:
+            return out
+        try:
+            # arq default queue key
+            depth = await self._redis.zcard("arq:queue")
+            out["queue_depth"] = int(depth or 0)
+        except Exception as exc:
+            logger.warning("arq queue depth probe failed: %s", exc)
+        try:
+            raw = await self._redis.get(self.HEARTBEAT_KEY)
+            if raw is not None:
+                ts = float(raw)
+                age = max(0.0, time.time() - ts)
+                out["worker_heartbeat_age_s"] = round(age, 1)
+                out["worker_visible"] = age < 120.0
+        except Exception as exc:
+            logger.warning("arq worker heartbeat probe failed: %s", exc)
+        return out
 
 
 async def create_ingest_queue(run_job: RunJobFn) -> IngestQueue:

@@ -16,11 +16,29 @@ def test_check_health_ok():
                 "vector_store_live": "ok",
                 "state_store_live": "ok",
                 "knowledge_graph_live": "ok",
+                "embeddings": "ok",
+                "ingest_worker": "ok",
             },
         }
     )
     with patch.object(alerts, "_get", return_value=(200, body)):
         assert alerts.check_health("http://test") == []
+
+
+def test_check_health_embeddings_down():
+    body = json.dumps(
+        {
+            "status": "degraded",
+            "dependencies": {
+                "vector_store_live": "ok",
+                "state_store_live": "ok",
+                "embeddings": "unavailable",
+            },
+        }
+    )
+    with patch.object(alerts, "_get", return_value=(503, body)):
+        out = alerts.check_health("http://test")
+        assert any("503" in x or "embeddings" in x for x in out)
 
 
 def test_check_health_degraded():
