@@ -104,6 +104,7 @@ services:
         https_proxy: ${HTTPS_PROXY:-}
         NO_PROXY: ${NO_PROXY:-}
         no_proxy: ${NO_PROXY:-}
+        INSTALL_SYSTEM_OCR: ${INSTALL_SYSTEM_OCR:-1}
     container_name: agenthub-api
     ports:
       - "8080:8080"
@@ -155,6 +156,7 @@ services:
         https_proxy: ${HTTPS_PROXY:-}
         NO_PROXY: ${NO_PROXY:-}
         no_proxy: ${NO_PROXY:-}
+        INSTALL_SYSTEM_OCR: ${INSTALL_SYSTEM_OCR:-1}
     container_name: agenthub-ingest-worker
     command: ["arq", "workers.ingest_worker.WorkerSettings"]
     env_file:

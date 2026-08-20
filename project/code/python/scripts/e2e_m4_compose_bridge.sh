@@ -9,8 +9,10 @@
 # Build note: compose sets build.network=host so apt works under Clash TUN;
 #             runtime containers still use the bridge network (isomorphic check).
 # Optional:
-#   HTTP_PROXY / HTTPS_PROXY  — passed into image build for apt/pip
+#   HTTP_PROXY / HTTPS_PROXY  — passed into image build for apt/pip (Clash mixed port)
+#   INSTALL_SYSTEM_OCR=0      — skip tesseract/poppler apt (TUN escape; PDF OCR degraded)
 #   SKIP_BUILD=1              — reuse existing images (up -d without --build)
+# Production: build images in CI without TUN, push registry; servers only pull+up.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"  # project/code

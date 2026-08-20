@@ -54,6 +54,12 @@ Add these for full-stack / E2E work (optional for unit tests):
 
 After secrets are set, copy or merge into `project/code/python/.env` before starting Compose.
 
+### Docker build on hosts with Clash/Mihomo TUN
+
+`apt`/`pip` during **image build** may fail (`deb.debian.org` → `198.18.0.x` fake-IP). **Runtime/production does not run apt** — ship prebuilt images from CI or a clean builder.
+
+Local escapes: `HTTP_PROXY=http://127.0.0.1:<clash-mixed-port>` for build, or `INSTALL_SYSTEM_OCR=0` to skip OCR system packages. See `project/docs/MVP_demo_guide.md`.
+
 ### Optional: local dependency stack
 
 From `project/code/` (needs `.env` with passwords):

@@ -56,9 +56,20 @@ bash python/scripts/e2e_m4_compose_bridge.sh
 
 **Clash/Mihomo TUN 导致 `apt` 连不上 `deb.debian.org`（`198.18.0.x`）时：**
 
-- 镜像 **构建** 已默认 `build.network: host`（只影响 build，不改变运行时 bridge）。
-- 或导出代理后再 build：`export HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=...`（端口改成你的混合端口）。
-- 已有镜像时可：`SKIP_BUILD=1 bash python/scripts/e2e_m4_compose_bridge.sh`
+- **上线不会再跑 `apt`**：生产拉的是已构建镜像；此错误只会出现在**构建机**。
+- **推荐上线路径：** 在无 TUN 的 CI（如 GitHub Actions）或干净机器 `docker compose build` → push 到镜像仓库 → 服务器 `pull` + `up`（不要在 TUN 机器上现场 build 生产镜像）。
+- **本机构建绕行（仍开着 TUN）：**
+  1. 走 Clash **HTTP 混合端口**（常见 `7890`，以你面板为准），不要指望 fake-IP 直连：
+     ```bash
+     export HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890
+     docker compose -f docker-compose.yml --env-file python/.env build
+     ```
+  2. 或临时跳过系统 OCR 包（PDF OCR 降级，markdown/文本仍可用）：
+     ```bash
+     INSTALL_SYSTEM_OCR=0 docker compose -f docker-compose.yml --env-file python/.env build
+     ```
+  3. 已有镜像：`SKIP_BUILD=1 bash python/scripts/e2e_m4_compose_bridge.sh`
+- 镜像 **构建** 默认 `build.network: host`（只影响 build；业务容器运行时仍是 bridge）。
 
 打开：
 
