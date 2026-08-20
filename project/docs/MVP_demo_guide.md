@@ -74,6 +74,17 @@ cd project/code/python
 REQUIRE_OPENAI_API_KEY=false DISABLE_LOCAL_EMBEDDINGS=1 UPDATE_MODE=off bash scripts/run_unit_tests.sh
 ```
 
+主链路 HTTP 契约（无真实 LLM）：`tests/test_mvp_main_path.py`。
+
+compose/uvicorn 已启动且有网关密钥时：
+
+```bash
+cd project/code/python
+ADMIN_PASS='...' bash scripts/e2e_mvp_main_path.sh
+```
+
+API 不可达时脚本 exit 0 并打印 SKIP，不把环境缺失当成失败。
+
 ---
 
 ## 2. 演示路径：upload 到 ingest 再到 QA
@@ -180,4 +191,5 @@ curl -sS -X POST "$BASE/api/qa/ask" \
 - [x] 含 compose / 本机启动步骤与 health 检查
 - [x] 含 UI 与 curl 的 upload → ingest 任务 → QA
 - [x] 含已知限制与「不可宣称可售」边界
-- [ ] 本机 compose 完整走通一次并贴日志 → 记入 ROADMAP **M4**（本页不代替联调证据）
+- [x] M4 单测主链路：`tests/test_mvp_main_path.py`（login→202→task succeeded→QA）
+- [ ] 本机 compose 完整走通一次：`bash scripts/e2e_mvp_main_path.sh` 并贴日志 → ROADMAP **M4**
